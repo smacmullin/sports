@@ -1,6 +1,8 @@
 import configobj
 from crate import client
 from dateutil import parser
+from fuzzywuzzy import process
+from fuzzywuzzy import fuzz
 import logging
 logging.basicConfig(filename="/Users/smacmullin/sports/rss.log",format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
 import urllib2
@@ -47,9 +49,33 @@ def parse_line_feed(feed, sport):
         dt_aware = localtz.localize(dt)
         unixtime = time.mktime(dt_aware.timetuple())
 
-        for team in sport:
-            if team in atoms[1]: away_team = sport[team]
-            if team in atoms[3]: home_team = sport[team]
+        teams = [team for team in sport]
+
+        guesses = process.extract(atoms[1], teams, limit=4)
+        matches = []
+        for guess in guesses:
+            ratio = fuzz.ratio(guess, atoms[1])
+            matches.append({'team': guess[0],
+                            'fuzz': guess[1],
+                            'ratio': ratio})
+
+        max_match = max(matches, key=lambda x: x['ratio'])
+        away_team_longname = max_match['team']
+        away_team = sport[away_team_longname]
+
+        guesses = process.extract(atoms[3], teams, limit=4)
+        matches = []
+        for guess in guesses:
+            ratio = fuzz.ratio(guess, atoms[3])
+            matches.append({'team': guess[0],
+                            'fuzz': guess[1],
+                            'ratio': ratio})
+
+        max_match = max(matches, key=lambda x: x['ratio'])
+        home_team_longname  = max_match['team']
+        home_team = sport[home_team_longname]
+
+        #todo: add warning if match confidence it too low
 
         away_payout = re.sub('[(){}<>]', '', atoms[1].split(' ')[-1])
         if away_payout == 'even': away_payout = 100
@@ -62,20 +88,20 @@ def parse_line_feed(feed, sport):
         home_spread = float(atoms[3].split(' ')[-2])
 
         away_ml = atoms[2].split(":")[-1]
-        if away_ml == 'even': away_ml = 100
+        if (away_ml == 'even' or away_ml == 'even.'): away_ml = 100
         away_ml = float(away_ml)
 
         home_ml = atoms[4].split(":")[-1]
-        if home_ml == 'even': home_ml = 100
+        if (home_ml == 'even' or home_ml == 'even.'): home_ml = 100
         home_ml = float(home_ml)
 
         over_payout = re.sub('[(){}<>]', '', atoms[5].split(' ')[-1])
-        if over_payout == 'even': over_payout = 100
+        if (over_payout == 'even' or over_payout == 'even.'): over_payout = 100
         over_payout = float(over_payout)
         over_points = float(atoms[5].split(' ')[-2])
 
         under_payout = re.sub('[(){}<>]', '', atoms[6].split(' ')[-1])
-        if under_payout == 'even': under_payout = 100
+        if (under_payout == 'even' or under_payout == 'even.'): under_payout = 100
         under_payout = float(under_payout)
         under_points = float(atoms[6].split(' ')[-2])
 
@@ -85,6 +111,23 @@ def parse_line_feed(feed, sport):
                under_points, over_payout, under_payout, home_spread, home_payout, away_spread,
                away_payout,home_ml, away_ml])
     return rows
+
+
+def insert_games_to_crate(rows, schema):
+
+    config = configobj.ConfigObj("/Users/smacmullin/sports/crate.ini")
+    crate_host = config["crate"]["host_url"]
+
+
+    connection = client.connect(crate_host)
+    print connection.client._active_servers
+    cursor = connection.cursor()
+
+    #todo: check if game exists in crate, if not, put it in
+    query = '''INSERT INTO %s.games ("GameId","GameTime","UnixGameTime"
+                    "HomeTeam", "AwayTeam") VALUES (?,?,?,?,?)'''%schema
+
+    cursor.executemany(query,rows)
 
 
 def insert_lines_to_crate(rows, schema):
@@ -97,10 +140,10 @@ def insert_lines_to_crate(rows, schema):
     print connection.client._active_servers
     cursor = connection.cursor()
 
-    query = '''INSERT INTO %s.lines ("GameId","GameTime","UnixGameTime","QueryTime",
-                    "HomeTeam", "AwayTeam","OverPoints","UnderPoints","OverPayout","UnderPayout",
+    query = '''INSERT INTO %s.lines ("GameId", "QueryTime",
+                    "OverPoints","UnderPoints","OverPayout","UnderPayout",
                     "HomeSpread","HomePayout","AwaySpread","AwayPayout",
-                    "HomeMoneyline","AwayMoneyline") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''%schema
+                    "HomeMoneyline","AwayMoneyline") VALUES (?,?,?,?,?,?,?,?,?,?,?)'''%schema
 
     cursor.executemany(query,rows)
 
@@ -108,23 +151,35 @@ def insert_lines_to_crate(rows, schema):
 if __name__=='__main__':
 
     while True:
-        try:
-            url = 'https://www.sportsbook.ag/rss/nfl-football'
-            feed = get_line_feed(url)
-            rows = parse_line_feed(feed, nfl_teams)
-            insert_lines_to_crate(rows, "nfl")
-            logging.info("Inserted %s game lines to nfl"%len(rows))
-        except:
-            logging.error("Error from nfl lines: " % traceback.format_exc())
+
+        # try:
+        #     url = 'https://www.sportsbook.ag/rss/nfl-football'
+        #     feed = get_line_feed(url)
+        #     if len(feed) > 0:
+        #         rows = parse_line_feed(feed, nfl_teams)
+        #         insert_lines_to_crate(rows, "nfl")
+        #         logging.info("Inserted %s game lines to nfl" % len(rows))
+        #     else:
+        #         logging.info("No new nfl games to upload")
+        #         pass
+        # except:
+        #     logging.error("Error from nfl lines: " % traceback.format_exc())
+        #     pass
 
         try:
             url = 'https://www.sportsbook.ag/rss/ncaa-football'
             feed = get_line_feed(url)
-            rows = parse_line_feed(feed, ncaa_fb_teams)
-            insert_lines_to_crate(rows, "ncaa_fb")
-            logging.info("Inserted %s game lines to ncaa fb" % len(rows))
+            if len(feed) > 0:
+                rows = parse_line_feed(feed, ncaa_fb_teams)
+                insert_lines_to_crate(rows, "ncaa_fb")
+                logging.info("Inserted %s game lines to ncaa fb" % len(rows))
+            else:
+                logging.info("No new ncaa fb games to upload")
+                pass
+
         except:
             logging.error("Error from ncaa fb lines: " % traceback.format_exc())
+            pass
 
         time.sleep(3600)
 
