@@ -126,16 +126,15 @@ def parse_line_feed(feed, sport):
             under_points = float(atoms[6].split(' ')[-2])
 
             game_id = str(dt_aware.year) + str(dt_aware.month) + str(dt_aware.day) + '_' + away_team + '_' + home_team
+            game_date = str(dt_aware.year) + str(dt_aware.month) + str(dt_aware.day)
 
-            games.append([game_id, str(dt_aware), unixtime, home_team, away_team])
+            games.append([game_id, game_date, str(dt_aware), unixtime, home_team, away_team])
             lines.append([game_id, time.time(), over_points, under_points, over_payout, under_payout,
                           home_spread, home_payout, away_spread, away_payout, home_ml, away_ml])
 
         except:
 
             logging.error(str(traceback.format_exc()))
-
-
 
     return games, lines
 
@@ -159,8 +158,8 @@ def insert_lines_to_crate(games, lines, schema):
 
             if len([row[0] for row in cursor])==0:
 
-                query = '''INSERT INTO %s.games ("GameId","GameTime","UnixGameTime",
-                                "HomeTeam", "AwayTeam") VALUES (?,?,?,?,?)'''%schema
+                query = '''INSERT INTO %s.games ("GameId","GameDate","GameTime","UnixGameTime",
+                                "HomeTeam", "AwayTeam") VALUES (?,?,?,?,?,?)'''%schema
 
                 cursor.execute(query, game)
 
@@ -184,30 +183,29 @@ def insert_lines_to_crate(games, lines, schema):
         logging.error(str(traceback.format_exc()))
 
 
-
 if __name__=='__main__':
 
-    while True:
+    #while True:
 
-        url = 'https://www.sportsbook.ag/rss/nba-basketball'
-        feed = get_line_feed(url)
-        if len(feed) > 0:
-            games, lines = parse_line_feed(feed, nba_teams)
-            insert_lines_to_crate(games, lines, "nba")
-            logging.info("Inserted %s game lines to nba" % len(lines))
-        else:
-            logging.info("No new nba games to upload")
-            pass
+    url = 'https://www.sportsbook.ag/rss/nba-basketball'
+    feed = get_line_feed(url)
+    if len(feed) > 0:
+        games, lines = parse_line_feed(feed, nba_teams)
+        insert_lines_to_crate(games, lines, "nba")
+        logging.info("Inserted %s game lines to nba" % len(lines))
+    else:
+        logging.info("No new nba games to upload")
+        #pass
 
-        url = 'https://www.sportsbook.ag/rss/nfl-football'
-        feed = get_line_feed(url)
-        if len(feed) > 0:
-            games, lines = parse_line_feed(feed, nfl_teams)
-            insert_lines_to_crate(games, lines, "nfl")
-            logging.info("Inserted %s game lines to nfl" % len(lines))
-        else:
-            logging.info("No new nfl games to upload")
-            pass
+    url = 'https://www.sportsbook.ag/rss/nfl-football'
+    feed = get_line_feed(url)
+    if len(feed) > 0:
+        games, lines = parse_line_feed(feed, nfl_teams)
+        insert_lines_to_crate(games, lines, "nfl")
+        logging.info("Inserted %s game lines to nfl" % len(lines))
+    else:
+        logging.info("No new nfl games to upload")
+        #pass
 
 
         # #try:
@@ -225,5 +223,5 @@ if __name__=='__main__':
         # #     logging.error("Error from ncaa fb lines: " % traceback.format_exc())
         # #     pass
 
-        time.sleep(3600)
+        #time.sleep(3600)
 

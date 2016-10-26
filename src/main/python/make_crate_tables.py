@@ -38,6 +38,7 @@ cursor.execute(
 CREATE TABLE IF NOT EXISTS nfl.games (
     "GameId" string,
     "GameTime" string,
+    "GameDate" string,
     "UnixGameTime" double,
     "HomeTeam" string,
     "AwayTeam" string
@@ -71,9 +72,32 @@ cursor.execute(
 CREATE TABLE IF NOT EXISTS nba.games (
     "GameId" string,
     "GameTime" string,
+    "GameDate" string,
     "UnixGameTime" double,
     "HomeTeam" string,
     "AwayTeam" string
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nfl.results")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nfl.results (
+    "GameId" string,
+    "HomeScore" float,
+    "AwayScore" float
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nba.results")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nba.results (
+    "GameId" string,
+    "HomeScore" float,
+    "AwayScore" float
 )
 CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
 """ % (shards, replicas))
