@@ -17,11 +17,7 @@ cursor.execute(
 """
 CREATE TABLE IF NOT EXISTS nfl.lines (
     "GameId" string,
-    "GameTime" string,
-    "UnixGameTime" double,
     "QueryTime" double,
-    "HomeTeam" string,
-    "AwayTeam" string,
     "OverPoints" float,
     "UnderPoints" float,
     "OverPayout" float,
@@ -36,16 +32,26 @@ CREATE TABLE IF NOT EXISTS nfl.lines (
 CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
 """ % (shards, replicas))
 
-cursor.execute("DROP TABLE IF EXISTS ncaa_fb.lines")
+cursor.execute("DROP TABLE IF EXISTS nfl.games")
 cursor.execute(
 """
-CREATE TABLE IF NOT EXISTS ncaa_fb.lines (
+CREATE TABLE IF NOT EXISTS nfl.games (
     "GameId" string,
     "GameTime" string,
+    "GameDate" string,
     "UnixGameTime" double,
-    "QueryTime" double,
     "HomeTeam" string,
-    "AwayTeam" string,
+    "AwayTeam" string
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nba.lines")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nba.lines (
+    "GameId" string,
+    "QueryTime" double,
     "OverPoints" float,
     "UnderPoints" float,
     "OverPayout" float,
@@ -56,6 +62,42 @@ CREATE TABLE IF NOT EXISTS ncaa_fb.lines (
     "AwayPayout" float,
     "HomeMoneyline" float,
     "AwayMoneyline" float
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nba.games")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nba.games (
+    "GameId" string,
+    "GameTime" string,
+    "GameDate" string,
+    "UnixGameTime" double,
+    "HomeTeam" string,
+    "AwayTeam" string
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nfl.results")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nfl.results (
+    "GameId" string,
+    "HomeScore" float,
+    "AwayScore" float
+)
+CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+""" % (shards, replicas))
+
+cursor.execute("DROP TABLE IF EXISTS nba.results")
+cursor.execute(
+"""
+CREATE TABLE IF NOT EXISTS nba.results (
+    "GameId" string,
+    "HomeScore" float,
+    "AwayScore" float
 )
 CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
 """ % (shards, replicas))
