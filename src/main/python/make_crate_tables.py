@@ -12,39 +12,51 @@ connection = client.connect(crate_host)
 print connection.client._active_servers
 cursor = connection.cursor()
 
-cursor.execute("DROP TABLE IF EXISTS nfl.lines")
-cursor.execute(
-"""
-CREATE TABLE IF NOT EXISTS nfl.lines (
-    "GameId" string,
-    "QueryTime" double,
-    "OverPoints" float,
-    "UnderPoints" float,
-    "OverPayout" float,
-    "UnderPayout" float,
-    "HomeSpread" float,
-    "HomePayout" float,
-    "AwaySpread" float,
-    "AwayPayout" float,
-    "HomeMoneyline" float,
-    "AwayMoneyline" float
-)
-CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
-""" % (shards, replicas))
+# cursor.execute("DROP TABLE IF EXISTS nfl.lines")
+# cursor.execute(
+# """
+# CREATE TABLE IF NOT EXISTS nfl.lines (
+#     "GameId" string,
+#     "QueryTime" double,
+#     "OverPoints" float,
+#     "UnderPoints" float,
+#     "OverPayout" float,
+#     "UnderPayout" float,
+#     "HomeSpread" float,
+#     "HomePayout" float,
+#     "AwaySpread" float,
+#     "AwayPayout" float,
+#     "HomeMoneyline" float,
+#     "AwayMoneyline" float
+# )
+# CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+# """ % (shards, replicas))
+#
+# cursor.execute("DROP TABLE IF EXISTS nfl.games")
+# cursor.execute(
+# """
+# CREATE TABLE IF NOT EXISTS nfl.games (
+#     "GameId" string,
+#     "GameTime" string,
+#     "GameDate" string,
+#     "UnixGameTime" double,
+#     "HomeTeam" string,
+#     "AwayTeam" string
+# )
+# CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+# """ % (shards, replicas))
+#
+# cursor.execute("DROP TABLE IF EXISTS nfl.results")
+# cursor.execute(
+# """
+# CREATE TABLE IF NOT EXISTS nfl.results (
+#     "GameId" string,
+#     "HomeScore" float,
+#     "AwayScore" float
+# )
+# CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
+# """ % (shards, replicas))
 
-cursor.execute("DROP TABLE IF EXISTS nfl.games")
-cursor.execute(
-"""
-CREATE TABLE IF NOT EXISTS nfl.games (
-    "GameId" string,
-    "GameTime" string,
-    "GameDate" string,
-    "UnixGameTime" double,
-    "HomeTeam" string,
-    "AwayTeam" string
-)
-CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
-""" % (shards, replicas))
 
 cursor.execute("DROP TABLE IF EXISTS nba.lines")
 cursor.execute(
@@ -52,16 +64,8 @@ cursor.execute(
 CREATE TABLE IF NOT EXISTS nba.lines (
     "GameId" string,
     "QueryTime" double,
-    "OverPoints" float,
-    "UnderPoints" float,
-    "OverPayout" float,
-    "UnderPayout" float,
-    "HomeSpread" float,
-    "HomePayout" float,
-    "AwaySpread" float,
-    "AwayPayout" float,
-    "HomeMoneyline" float,
-    "AwayMoneyline" float
+    "OverUnder" float,
+    "HomeSpread" float
 )
 CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
 """ % (shards, replicas))
@@ -71,22 +75,9 @@ cursor.execute(
 """
 CREATE TABLE IF NOT EXISTS nba.games (
     "GameId" string,
-    "GameTime" string,
-    "GameDate" string,
-    "UnixGameTime" double,
+    "GameDate" int,
     "HomeTeam" string,
     "AwayTeam" string
-)
-CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
-""" % (shards, replicas))
-
-cursor.execute("DROP TABLE IF EXISTS nfl.results")
-cursor.execute(
-"""
-CREATE TABLE IF NOT EXISTS nfl.results (
-    "GameId" string,
-    "HomeScore" float,
-    "AwayScore" float
 )
 CLUSTERED INTO %d SHARDS WITH (number_of_replicas=%d)
 """ % (shards, replicas))

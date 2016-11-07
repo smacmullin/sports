@@ -108,8 +108,10 @@ def insert_results_to_crate(games, schema):
 
 if __name__=='__main__':
 
-    yesterday = date.today() - timedelta(1)
-    gamedate = yesterday.strftime('%Y%m%d')
+    # yesterday = date.today() - timedelta(1)
+    # gamedate = yesterday.strftime('%Y%m%d')
+    gamedate='20161028'
     url = 'http://www.cbssports.com/nba/scoreboard/%s'%gamedate
     games = process_page(url, gamedate)
+    print games
     insert_results_to_crate(games, 'nba')
