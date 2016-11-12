@@ -2,6 +2,7 @@ import configobj
 import cPickle
 from crate import client
 import logging
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc3 as pm
@@ -97,23 +98,50 @@ class Predictor(object):
         observed_home_score = test_dataset['observed_home_score']
         observed_away_score = test_dataset['observed_away_score']
 
+        # with pm.Model() as model:
+        #     # global model parameters
+        #     baseline_home = pm.Normal('baseline_home', 0., 0.0005)
+        #     baseline_away = pm.Normal('baseline_away', 0., 0.0005)
+        #     tau = pm.Gamma('tau', 1., 2.)  # tau for a normal distribution is 1/sigma**2
+        #
+        #     # team-specific model parameters
+        #     team_skills = pm.Normal("team_skills",
+        #                             mu=0.0,
+        #                             tau=tau,
+        #                             shape=num_teams)
+        #
+        #     team_skill = pm.Deterministic('team_skill', team_skills - tt.mean(team_skills))
+        #
+        #     home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
+        #     away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
+        #
+        #     # likelihood of observed data
+        #     home_points = pm.Poisson('home_points', mu=home_theta, observed=observed_home_score)
+        #     away_points = pm.Poisson('away_points', mu=away_theta, observed=observed_away_score)
+
         with pm.Model() as model:
             # global model parameters
-            baseline_home = pm.Normal('baseline_home', 0., 0.0005)
-            baseline_away = pm.Normal('baseline_away', 0., 0.0005)
-            tau = pm.Gamma('tau', 1., 2.)  # tau for a normal distribution is 1/sigma**2
+            baseline_home = pm.Normal('baseline_home', 0., tau=0.01)
+            tau_offense = pm.Gamma('tau_offense', .1, .1)  # tau for a normal distribution is 1/sigma**2
+            tau_defense = pm.Gamma('tau_defense', .1, .1)
+            intercept = pm.Normal('intercept',  4.4, tau=0.1)
 
             # team-specific model parameters
-            team_skills = pm.Normal("team_skills",
+            offense_skills = pm.Normal("offense_skills",
                                     mu=0.0,
-                                    tau=tau,
+                                    tau=tau_offense,
                                     shape=num_teams)
 
-            team_skill = pm.Deterministic('team_skill', team_skills - tt.mean(team_skills))
+            defense_skills = pm.Normal("defense_skills",
+                                    mu=0.0,
+                                    tau=tau_defense,
+                                    shape=num_teams)
 
-            home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
-            away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
+            offense_skill = pm.Deterministic('offense_skill', offense_skills - tt.mean(offense_skills))
+            defense_skill = pm.Deterministic('defense_skill', defense_skills - tt.mean(defense_skills))
 
+            home_theta = np.exp(intercept + baseline_home + offense_skill[home_team] - defense_skill[away_team])
+            away_theta = np.exp(intercept + offense_skill[away_team] - defense_skill[home_team])
             # likelihood of observed data
             home_points = pm.Poisson('home_points', mu=home_theta, observed=observed_home_score)
             away_points = pm.Poisson('away_points', mu=away_theta, observed=observed_away_score)
@@ -122,6 +150,8 @@ class Predictor(object):
             start = pm.find_MAP()
             step = pm.NUTS(state=start)
             trace = pm.sample(5000, step, start=start)
+            pm.traceplot(trace)
+            plt.show()
 
         return trace
 
@@ -177,12 +207,21 @@ class Predictor(object):
 
         connection = self._open_db_connection()
 
-        baseline_home = trace['baseline_home']
-        baseline_away = trace['baseline_away']
-        team_skills_likelihood = trace['team_skill']
-        team_skill = {}
+        baseline_home = np.asarray(trace['baseline_home'])
+        #baseline_away = trace['baseline_away']
+        #team_skills_likelihood = trace['team_skill']
+        offense_skills_likelihood = np.asarray(trace['offense_skill'])
+        defense_skills_likelihood = np.asarray(trace['defense_skill'])
+        intercept = np.asarray(trace['intercept'])
+
+        #team_skill = {}
+        offense_skill = {}
+        defense_skill ={}
+
         for val in teams.values:
-            team_skill[val[0]] = [j[val[1]] for j in team_skills_likelihood]
+            #team_skill[val[0]] = [j[val[1]] for j in team_skills_likelihood]
+            offense_skill[val[0]] = np.asarray([j[val[1]] for j in offense_skills_likelihood])
+            defense_skill[val[0]] = np.asarray([j[val[1]] for j in defense_skills_likelihood])
 
         # query for a test set of games
         sql = '''
@@ -208,7 +247,9 @@ class Predictor(object):
         test_records = df.to_dict('records')
 
         ou_counter = 0.0
+        ou_random_counter = 0.0
         spread_counter = 0.0
+        spread_random_counter = 0.0
 
         results = []
 
@@ -218,8 +259,11 @@ class Predictor(object):
             home_team = game["HomeTeam"]
 
             # theta
-            home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
-            away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
+            #home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
+            #away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
+
+            home_theta = np.exp(intercept + baseline_home + offense_skill[home_team] - defense_skill[away_team])
+            away_theta = np.exp(intercept + offense_skill[away_team] - defense_skill[home_team])
 
             home_scores = np.random.poisson(home_theta)
             away_scores = np.random.poisson(away_theta)
@@ -237,6 +281,8 @@ class Predictor(object):
             else:
                 ou_bet = 0
 
+            ou_random_bet = np.random.choice([0,1])
+
             if (game['HomeScore'] + game['AwayScore']) > game['OverUnder']:
                 ou_outcome = 1
             else:
@@ -248,7 +294,15 @@ class Predictor(object):
             else:
                 ou_bet_outcome = "Lose"
 
+            if ou_outcome == ou_random_bet:
+                ou_random_counter += 1.0
+                ou_random_bet_outcome = "Win"
+            else:
+                ou_random_bet_outcome = "Lose"
+
             # spread bet validation
+
+            home_random_bet = np.random.choice([0,1])
 
             if predicted_spread < game["HomeSpread"]:
                 home_bet = 1
@@ -266,6 +320,12 @@ class Predictor(object):
             else:
                 spread_bet_outcome = "Lose"
 
+            if home_random_bet == home_outcome:
+                spread_random_counter += 1.0
+                spread_random_bet_outcome = "Win"
+            else:
+                spread_random_bet_outcome = "Lose"
+
             result = {"HomeTeam": home_team,
                       "AwayTeam": away_team,
                       "PredictedHomeScore": int(predicted_home_score),
@@ -278,28 +338,33 @@ class Predictor(object):
                       "ActualTotalScore": game["HomeScore"] + game["AwayScore"],
                       "PredictedSpread": predicted_spread,
                       "OfferedSpread": game["HomeSpread"],
-                      "SpreadBetOutcome": spread_bet_outcome}
+                      "SpreadBetOutcome": spread_bet_outcome,
+                      "SpreadRandomBetOutcome": spread_random_bet_outcome,
+                      "OverUnderRandomBetOutcome": ou_random_bet_outcome}
 
             results.append(result)
 
         results_df = pd.DataFrame(results)
 
-        print "O/U win percentage: %s" %(ou_counter / len(test_records))
-        print "Spread Bet Win Percentage: %s"%(spread_counter / len(test_records))
+        print "MODEL: O/U win percentage: %s" %(ou_counter / len(test_records))
+        print "MODEL: Spread Bet Win Percentage: %s"%(spread_counter / len(test_records))
+        print
+        print "RANDOM: O/U win percentage: %s" %(ou_random_counter / len(test_records))
+        print "RANDOM: Spread Bet Win Percentage: %s"%(spread_random_counter / len(test_records))
 
-        print results_df
+        #print results_df
         return results_df
 
 if __name__=='__main__':
 
     predictor = Predictor()
-    test_dataset = predictor.get_test_dataset(startdate=20151026, enddate=20160110)
+    test_dataset = predictor.get_test_dataset(startdate=20151110, enddate=20151120)
 
     trace = predictor.model(test_dataset)
-    predictor.save_model(trace,file='/Users/smacmullin/sports/test/modeltest.pkl')
+    #predictor.save_model(trace,file='/Users/smacmullin/sports/test/modeltest.pkl')
 
     #trace = predictor.load_model(file='/Users/smacmullin/sports/test/modeltest.pkl')
 
     #predictor.predict_game(trace, test_dataset['teams'], away_team='LAL', home_team='NYK')
-    results = predictor.validate_model(trace, test_dataset['teams'], startdate=20160111, enddate=20160120)
+    results = predictor.validate_model(trace, test_dataset['teams'], startdate=20151120, enddate=20151130)
 
