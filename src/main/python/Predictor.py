@@ -1,6 +1,7 @@
 import configobj
 import cPickle
 from crate import client
+import datetime as dt
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
@@ -149,9 +150,9 @@ class Predictor(object):
         with model:
             start = pm.find_MAP()
             step = pm.NUTS(state=start)
-            trace = pm.sample(5000, step, start=start)
-            pm.traceplot(trace)
-            plt.show()
+            trace = pm.sample(1000, step, start=start)
+            #pm.traceplot(trace)
+            #plt.show()
 
         return trace
 
@@ -203,23 +204,19 @@ class Predictor(object):
         std_ou = np.std([aws + hs for hs, aws in zip(home_scores, away_scores)])
         print "Predicted Over Under: %s +/- %s" % (predicted_ou, std_ou)
 
-    def validate_model(self, trace, teams, startdate=None, enddate=None):
+    def validate_model(self, trace, teams, startdate=None, enddate=None, plot=True):
 
         connection = self._open_db_connection()
 
         baseline_home = np.asarray(trace['baseline_home'])
-        #baseline_away = trace['baseline_away']
-        #team_skills_likelihood = trace['team_skill']
         offense_skills_likelihood = np.asarray(trace['offense_skill'])
         defense_skills_likelihood = np.asarray(trace['defense_skill'])
         intercept = np.asarray(trace['intercept'])
 
-        #team_skill = {}
         offense_skill = {}
         defense_skill ={}
 
         for val in teams.values:
-            #team_skill[val[0]] = [j[val[1]] for j in team_skills_likelihood]
             offense_skill[val[0]] = np.asarray([j[val[1]] for j in offense_skills_likelihood])
             defense_skill[val[0]] = np.asarray([j[val[1]] for j in defense_skills_likelihood])
 
@@ -247,8 +244,11 @@ class Predictor(object):
         test_records = df.to_dict('records')
 
         ou_counter = 0.0
+        ou_games_bet_counter = 0.0
         ou_random_counter = 0.0
+
         spread_counter = 0.0
+        spread_games_bet_counter = 0.0
         spread_random_counter = 0.0
 
         results = []
@@ -257,10 +257,6 @@ class Predictor(object):
 
             away_team = game["AwayTeam"]
             home_team = game["HomeTeam"]
-
-            # theta
-            #home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
-            #away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
 
             home_theta = np.exp(intercept + baseline_home + offense_skill[home_team] - defense_skill[away_team])
             away_theta = np.exp(intercept + offense_skill[away_team] - defense_skill[home_team])
@@ -276,23 +272,27 @@ class Predictor(object):
 
             # over/under validation
 
-            if predicted_ou > game['OverUnder']:
-                ou_bet = 1
-            else:
-                ou_bet = 0
+            if True:
 
-            ou_random_bet = np.random.choice([0,1])
+                ou_games_bet_counter += 1
 
-            if (game['HomeScore'] + game['AwayScore']) > game['OverUnder']:
-                ou_outcome = 1
-            else:
-                ou_outcome = 0
+                if predicted_ou > game['OverUnder']:
+                    ou_bet = 1
+                else:
+                    ou_bet = 0
 
-            if ou_outcome == ou_bet:
-                ou_counter += 1.0
-                ou_bet_outcome = "Win"
-            else:
-                ou_bet_outcome = "Lose"
+                if (game['HomeScore'] + game['AwayScore']) > game['OverUnder']:
+                    ou_outcome = 1
+                else:
+                    ou_outcome = 0
+
+                if ou_outcome == ou_bet:
+                    ou_counter += 1.0
+                    ou_bet_outcome = "Win"
+                else:
+                    ou_bet_outcome = "Lose"
+
+            ou_random_bet = np.random.choice([0, 1])
 
             if ou_outcome == ou_random_bet:
                 ou_random_counter += 1.0
@@ -302,23 +302,27 @@ class Predictor(object):
 
             # spread bet validation
 
-            home_random_bet = np.random.choice([0,1])
+            if True:
 
-            if predicted_spread < game["HomeSpread"]:
-                home_bet = 1
-            else:
-                home_bet = 0
+                spread_games_bet_counter += 1
 
-            if (game['AwayScore'] - game['HomeScore']) < game["HomeSpread"]:
-                home_outcome = 1
-            else:
-                home_outcome = 0
+                if predicted_spread < game["HomeSpread"]:
+                    home_bet = 1
+                else:
+                    home_bet = 0
 
-            if home_bet == home_outcome:
-                spread_counter += 1.0
-                spread_bet_outcome = "Win"
-            else:
-                spread_bet_outcome = "Lose"
+                if (game['AwayScore'] - game['HomeScore']) < game["HomeSpread"]:
+                    home_outcome = 1
+                else:
+                    home_outcome = 0
+
+                if home_bet == home_outcome:
+                    spread_counter += 1.0
+                    spread_bet_outcome = "Win"
+                else:
+                    spread_bet_outcome = "Lose"
+
+            home_random_bet = np.random.choice([0, 1])
 
             if home_random_bet == home_outcome:
                 spread_random_counter += 1.0
@@ -346,25 +350,112 @@ class Predictor(object):
 
         results_df = pd.DataFrame(results)
 
-        print "MODEL: O/U win percentage: %s" %(ou_counter / len(test_records))
+        print "MODEL: O/U win percentage: %s" %(ou_counter / ou_games_bet_counter)
         print "MODEL: Spread Bet Win Percentage: %s"%(spread_counter / len(test_records))
         print
-        print "RANDOM: O/U win percentage: %s" %(ou_random_counter / len(test_records))
+        print "RANDOM: O/U win percentage: %s" %(ou_random_counter / spread_games_bet_counter)
         print "RANDOM: Spread Bet Win Percentage: %s"%(spread_random_counter / len(test_records))
+
+        logging.info("MODEL: O/U win percentage: %s" %(ou_counter / ou_games_bet_counter))
+        logging.info("MODEL: Spread Bet Win Percentage: %s"%(spread_counter / len(test_records)))
+        logging.info("RANDOM: O/U win percentage: %s" %(ou_random_counter / spread_games_bet_counter))
+        logging.info("RANDOM: Spread Bet Win Percentage: %s"%(spread_random_counter / len(test_records)))
+
+        if plot:
+            self._make_plots(results_df)
 
         #print results_df
         return results_df
 
+    def _make_plots(self, results_df):
+
+        # make a plot of the offered - predicted over/under
+
+        records = results_df.to_dict('records')
+
+        diff2 = [(r['ActualHomeScore'] + r['ActualAwayScore']) - r['PredictedOverUnder'] for r in records]
+        bins = np.linspace(-40, 40, 40)
+        plt.hist(diff2, bins, histtype='step', color='b')
+        plt.xlabel("Predicted - Actual Total")
+        plt.show()
+
+        diff3 = [r['ActualHomeScore'] - r['PredictedHomeScore'] for r in records]
+        bins = np.linspace(-40, 40, 40)
+        plt.hist(diff3, bins, histtype='step', color='b')
+        plt.xlabel("Predicted - Actual Home")
+        plt.show()
+
+        diff4 = [r['ActualAwayScore'] - r['PredictedAwayScore'] for r in records]
+        bins = np.linspace(-40, 40, 40)
+        plt.hist(diff4, bins, histtype='step', color='b')
+        plt.xlabel("Predicted - Actual Away")
+        plt.show()
+
+        diff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records]
+        windiff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records if r['OverUnderOutcome'] == 'Win']
+        losediff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records if r['OverUnderOutcome'] == 'Lose']
+        bins = np.linspace(-25, 25, 10)
+        plt.hist(diff, bins, histtype='step', color='b', label='all')
+        plt.hist(windiff, bins, histtype='step', color='g', label='win')
+        plt.hist(losediff, bins, histtype='step', color='r', label='lose')
+        plt.xlabel('offered - predicted O/U')
+        plt.legend()
+        plt.show()
+
+        diff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records]
+        windiff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records if r['OverUnderOutcome'] == 'Win']
+        losediff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records if r['OverUnderOutcome'] == 'Lose']
+        bins = np.linspace(-25, 25, 10)
+        plt.hist(diff, bins, histtype='step', color='b', label='all')
+        plt.hist(windiff, bins, histtype='step', color='g', label='win')
+        plt.hist(losediff, bins, histtype='step', color='r', label='lose')
+        plt.xlabel('offered - predicted spread')
+        plt.legend()
+        plt.show()
+
+def generate_test_times():
+
+    start = dt.date(2015, 10, 25)
+    testing_delta = dt.timedelta(days=7)
+    training_delta = dt.timedelta(days=7)
+
+    testing_times = []
+    training_times = []
+
+    for i in range(20):
+        t = start + training_delta
+        t2 = t + testing_delta
+
+        training_times.append((int(start.strftime('%Y') + start.strftime('%m') + start.strftime('%d')),
+                               int(t.strftime('%Y') + t.strftime('%m') + t.strftime('%d'))))
+        testing_times.append((int(t.strftime('%Y') + t.strftime('%m') + t.strftime('%d')),
+                              int(t2.strftime('%Y') + t2.strftime('%m') + t2.strftime('%d'))))
+        start = start + testing_delta
+
+    return training_times, testing_times
+
 if __name__=='__main__':
 
-    predictor = Predictor()
-    test_dataset = predictor.get_test_dataset(startdate=20151110, enddate=20151120)
+    training_times, testing_times = generate_test_times()
 
-    trace = predictor.model(test_dataset)
-    #predictor.save_model(trace,file='/Users/smacmullin/sports/test/modeltest.pkl')
+    for train, test in zip(training_times, testing_times):
 
-    #trace = predictor.load_model(file='/Users/smacmullin/sports/test/modeltest.pkl')
+        logging.info("training set: %s - %s" % (train[0], train[1]))
+        logging.info("testing set: %s - %s" % (test[0], test[1]))
 
-    #predictor.predict_game(trace, test_dataset['teams'], away_team='LAL', home_team='NYK')
-    results = predictor.validate_model(trace, test_dataset['teams'], startdate=20151120, enddate=20151130)
+        try:
+            print train, test
+            predictor = Predictor()
 
+            test_dataset = predictor.get_test_dataset(startdate=train[0], enddate=train[1])
+
+            trace = predictor.model(test_dataset)
+            #predictor.save_model(trace,file='/Users/smacmullin/sports/test/modeltest.pkl')
+
+            #trace = predictor.load_model(file='/Users/smacmullin/sports/test/modeltest.pkl')
+
+            #predictor.predict_game(trace, test_dataset['teams'], away_team='LAL', home_team='NYK')
+            results = predictor.validate_model(trace, test_dataset['teams'], startdate=test[0], enddate=test[1], plot=False)
+        except:
+            print traceback.format_exc()
+            pass
