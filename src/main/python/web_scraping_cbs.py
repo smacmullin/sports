@@ -57,11 +57,6 @@ def process_page(url,gamedate):
                     team_longname = max_match['team']
                     team = nba_teams[team_longname]
 
-                    # print max_match
-                    # print team_longname
-                    # print team
-                    # raw_input()
-
                 for cell in score_cells:
                     score = float(cell.text.split('\n')[0])
 
@@ -78,7 +73,15 @@ def process_page(url,gamedate):
             home_score = game[1]['Score']
             away_score = game[0]['Score']
             game_id = gamedate + '_' + away_team + '_' + home_team
-            rows.append([game_id, away_score, home_score])
+
+            g = {"GameId":game_id,
+                 "GameDate":int(gamedate),
+                 "HomeTeam":home_team,
+                 "AwayTeam":away_team,
+                 "HomeScore":home_score,
+                 "AwayScore":away_score}
+
+            rows.append(g)
 
         return rows
 
@@ -96,12 +99,20 @@ def insert_results_to_crate(games, schema):
 
     for game in games:
         try:
-            query = '''SELECT "GameId" from %s.results where "GameId"='%s' '''%(schema,game[0])
+            query = '''SELECT "GameId" from %s.games where "GameId"='%s' '''%(schema,game["GameId"])
             cursor.execute(query)
             if len([row[0] for row in cursor])==0:
+
+                query = '''INSERT INTO %s.games ("GameId","GameDate","HomeTeam","AwayTeam") VALUES (?,?,?,?)'''%schema
+                args = [game["GameId"], game["GameDate"], game["HomeTeam"], game["AwayTeam"]]
+                cursor.execute(query, args)
+
                 query = '''INSERT INTO %s.results ("GameId","AwayScore","HomeScore") VALUES (?,?,?)'''%schema
-                cursor.execute(query, game)
+                args = [game["GameId"], game["AwayScore"], game["HomeScore"]]
+                cursor.execute(query, args)
+
             else:
+                logging.info("Game %s from %s already in database"%(game["GameId"],game["GameDate"]))
                 pass
         except:
             logging.error(str(traceback.format_exc()))
@@ -110,7 +121,7 @@ if __name__=='__main__':
 
     # yesterday = date.today() - timedelta(1)
     # gamedate = yesterday.strftime('%Y%m%d')
-    gamedate='20161028'
+    gamedate='20161126'
     url = 'http://www.cbssports.com/nba/scoreboard/%s'%gamedate
     games = process_page(url, gamedate)
     print games

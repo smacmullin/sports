@@ -3,17 +3,25 @@ import cPickle
 from crate import client
 import datetime as dt
 import logging
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc3 as pm
 import theano.tensor as tt
 import traceback
+from teams import nba_teams
 
 logging.basicConfig(filename="/Users/smacmullin/sports/modelvalidation.log",format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
 
-from teams import nba_teams
-team_keys = nba_teams
+
+def index_teams(team_keys):
+
+    team_index = {}
+    for i, key in enumerate(team_keys):
+        team_index[team_keys[key]] = i
+
+    return team_index
+
+team_index = index_teams(nba_teams)
 
 
 def moneyline_from_implied_odds(p):
@@ -35,6 +43,7 @@ class Predictor(object):
             else:
                 raise ValueError("%s has no attribute %s" % (type(self).__name__, key))
 
+
     def _open_db_connection(self, inifile="/Users/smacmullin/sports/crate.ini"):
 
         config = configobj.ConfigObj(inifile)
@@ -44,47 +53,48 @@ class Predictor(object):
         print connection.client._active_servers
         return connection
 
-    def get_test_dataset(self, startdate=None, enddate=None):
+    def get_test_dataset(self, date=None, ngames=None):
 
         connection = self._open_db_connection()
 
-        sql = '''
-        SELECT
-        nba.games."GameId" as "GameId",
-        nba.games."GameDate" as "GameDate",
-        nba.games."HomeTeam" as "HomeTeam",
-        nba.games."AwayTeam" as "AwayTeam",
-        nba.results."AwayScore" as "AwayScore",
-        nba.results."HomeScore" as "HomeScore"
-        FROM nba.games, nba.results
-        WHERE nba.games."GameId" = nba.results."GameId"
-        AND nba.games."GameDate" > %s AND nba.games."GameDate" < %s
-        ORDER BY nba.games."GameDate"
-        LIMIT 1000000
-        '''%(startdate,enddate)
+        frames = []
 
-        df = pd.read_sql(sql, connection)
+        for team in team_index.keys():
 
-        teams = df.HomeTeam.unique()
-        teams = pd.DataFrame(teams, columns=['Teams'])
-        teams['i'] = teams.index
+            sql = '''
+            SELECT
+            nba.games."GameId" as "GameId",
+            nba.games."GameDate" as "GameDate",
+            nba.games."HomeTeam" as "HomeTeam",
+            nba.games."AwayTeam" as "AwayTeam",
+            nba.results."AwayScore" as "AwayScore",
+            nba.results."HomeScore" as "HomeScore",
+            nba.lines."HomeSpread" as "HomeSpread",
+            nba.lines."OverUnder" as "OverUnder"
+            FROM nba.games, nba.lines, nba.results
+            WHERE nba.games."GameId" = nba.results."GameId"
+            AND nba.games."GameId" = nba.lines."GameId"
+            AND (nba.games."HomeTeam" = '%s' or nba.games."AwayTeam" = '%s')
+            AND nba.games."GameDate" < %i
+            ORDER BY nba.games."GameDate" DESC
+            LIMIT %i
+            ''' % (team, team, date, ngames)
 
-        df = pd.merge(df, teams, left_on='HomeTeam', right_on='Teams', how='left')
-        df = df.rename(columns={'i': 'i_home'})
-        df = pd.merge(df, teams, left_on='AwayTeam', right_on='Teams', how='left')
-        df = df.rename(columns={'i': 'i_away'})
+            df = pd.read_sql(sql, connection)
 
-        #print df.head()
+            frames.append(df)
+
+        df = pd.concat(frames)
 
         observed_home_score = df['HomeScore'].values
         observed_away_score = df['AwayScore'].values
 
-        home_team = df['i_home'].values
-        away_team = df['i_away'].values
+        home_team = [team_index[i] for i in df['HomeTeam'].values]
+        away_team = [team_index[i] for i in df['AwayTeam'].values]
 
-        num_teams = len(df.i_home.drop_duplicates())
+        num_teams = len(team_index)
 
-        return {'teams':teams,
+        return {'teams':team_index.keys(),
                 'num_teams':num_teams,
                 'home_team':home_team,
                 'away_team':away_team,
@@ -98,27 +108,6 @@ class Predictor(object):
         away_team = test_dataset['away_team']
         observed_home_score = test_dataset['observed_home_score']
         observed_away_score = test_dataset['observed_away_score']
-
-        # with pm.Model() as model:
-        #     # global model parameters
-        #     baseline_home = pm.Normal('baseline_home', 0., 0.0005)
-        #     baseline_away = pm.Normal('baseline_away', 0., 0.0005)
-        #     tau = pm.Gamma('tau', 1., 2.)  # tau for a normal distribution is 1/sigma**2
-        #
-        #     # team-specific model parameters
-        #     team_skills = pm.Normal("team_skills",
-        #                             mu=0.0,
-        #                             tau=tau,
-        #                             shape=num_teams)
-        #
-        #     team_skill = pm.Deterministic('team_skill', team_skills - tt.mean(team_skills))
-        #
-        #     home_theta = np.exp(baseline_home + team_skill[home_team])# - team_skill[away_team])
-        #     away_theta = np.exp(baseline_away + team_skill[away_team])# - team_skill[home_team])
-        #
-        #     # likelihood of observed data
-        #     home_points = pm.Poisson('home_points', mu=home_theta, observed=observed_home_score)
-        #     away_points = pm.Poisson('away_points', mu=away_theta, observed=observed_away_score)
 
         with pm.Model() as model:
             # global model parameters
@@ -172,19 +161,32 @@ class Predictor(object):
 
     def predict_game(self, trace, teams, away_team = None, home_team = None):
 
-        baseline_home = trace['baseline_home']
-        baseline_away = trace['baseline_away']
-        team_skills_likelihood = trace['team_skill']
-        team_skill = {}
-        for val in teams.values:
-            team_skill[val[0]] = [j[val[1]] for j in team_skills_likelihood]
+        baseline_home = np.asarray(trace['baseline_home'])
+        offense_skills_likelihood = np.asarray(trace['offense_skill'])
+        defense_skills_likelihood = np.asarray(trace['defense_skill'])
+        intercept = np.asarray(trace['intercept'])
 
-        # theta
-        home_theta = np.exp(baseline_home + team_skill[home_team] - team_skill[away_team])
-        away_theta = np.exp(baseline_away + team_skill[away_team] - team_skill[home_team])
+        offense_skill = {}
+        defense_skill ={}
+
+        for team in teams:
+            ix = team_index[team]
+            offense_skill[team] = np.asarray([val[ix] for val in offense_skills_likelihood])
+            defense_skill[team] = np.asarray([val[ix] for val in defense_skills_likelihood])
+
+        home_theta = np.exp(intercept + baseline_home + offense_skill[home_team] - defense_skill[away_team])
+        away_theta = np.exp(intercept + offense_skill[away_team] - defense_skill[home_team])
 
         home_scores = np.random.poisson(home_theta)
         away_scores = np.random.poisson(away_theta)
+
+        home_spreads = away_scores - home_scores
+        home_wins = 0.
+        for s in home_spreads:
+            if s < 0:
+                home_wins+=1.0
+        p_home = moneyline_from_implied_odds(home_wins/len(home_spreads))
+
 
         predicted_home_score = np.average(home_scores)
         stdev_home_score = np.std(home_scores)
@@ -203,215 +205,8 @@ class Predictor(object):
         predicted_ou = np.average([aws + hs for hs, aws in zip(home_scores, away_scores)])
         std_ou = np.std([aws + hs for hs, aws in zip(home_scores, away_scores)])
         print "Predicted Over Under: %s +/- %s" % (predicted_ou, std_ou)
+        print "Predicted Home Money: %s" %(p_home)
 
-    def validate_model(self, trace, teams, startdate=None, enddate=None, plot=True):
-
-        connection = self._open_db_connection()
-
-        baseline_home = np.asarray(trace['baseline_home'])
-        offense_skills_likelihood = np.asarray(trace['offense_skill'])
-        defense_skills_likelihood = np.asarray(trace['defense_skill'])
-        intercept = np.asarray(trace['intercept'])
-
-        offense_skill = {}
-        defense_skill ={}
-
-        for val in teams.values:
-            offense_skill[val[0]] = np.asarray([j[val[1]] for j in offense_skills_likelihood])
-            defense_skill[val[0]] = np.asarray([j[val[1]] for j in defense_skills_likelihood])
-
-        # query for a test set of games
-        sql = '''
-        SELECT
-        nba.games."GameId" as "GameId",
-        nba.games."GameDate" as "GameDate",
-        nba.games."HomeTeam" as "HomeTeam",
-        nba.games."AwayTeam" as "AwayTeam",
-        nba.results."AwayScore" as "AwayScore",
-        nba.results."HomeScore" as "HomeScore",
-        nba.lines."HomeSpread" as "HomeSpread",
-        nba.lines."OverUnder" as "OverUnder"
-        FROM nba.games, nba.lines, nba.results
-        WHERE nba.games."GameId" = nba.results."GameId"
-        AND nba.games."GameId" = nba.lines."GameId"
-        AND nba.games."GameDate" > %s AND nba.games."GameDate" < %s
-        ORDER BY nba.games."GameDate"
-        LIMIT 1000000
-        '''%(startdate, enddate)
-
-        df = pd.read_sql(sql, connection)
-        #print df.head()
-        test_records = df.to_dict('records')
-
-        ou_counter = 0.0
-        ou_games_bet_counter = 0.0
-        ou_random_counter = 0.0
-
-        spread_counter = 0.0
-        spread_games_bet_counter = 0.0
-        spread_random_counter = 0.0
-
-        results = []
-
-        for game in test_records:
-
-            away_team = game["AwayTeam"]
-            home_team = game["HomeTeam"]
-
-            home_theta = np.exp(intercept + baseline_home + offense_skill[home_team] - defense_skill[away_team])
-            away_theta = np.exp(intercept + offense_skill[away_team] - defense_skill[home_team])
-
-            home_scores = np.random.poisson(home_theta)
-            away_scores = np.random.poisson(away_theta)
-
-            predicted_home_score = np.median(home_scores)
-            predicted_away_score = np.median(away_scores)
-
-            predicted_spread = np.average([aws - hs for hs, aws in zip(home_scores, away_scores)])
-            predicted_ou = predicted_away_score + predicted_home_score
-
-            # over/under validation
-
-            if True:
-
-                ou_games_bet_counter += 1
-
-                if predicted_ou > game['OverUnder']:
-                    ou_bet = 1
-                else:
-                    ou_bet = 0
-
-                if (game['HomeScore'] + game['AwayScore']) > game['OverUnder']:
-                    ou_outcome = 1
-                else:
-                    ou_outcome = 0
-
-                if ou_outcome == ou_bet:
-                    ou_counter += 1.0
-                    ou_bet_outcome = "Win"
-                else:
-                    ou_bet_outcome = "Lose"
-
-            ou_random_bet = np.random.choice([0, 1])
-
-            if ou_outcome == ou_random_bet:
-                ou_random_counter += 1.0
-                ou_random_bet_outcome = "Win"
-            else:
-                ou_random_bet_outcome = "Lose"
-
-            # spread bet validation
-
-            if True:
-
-                spread_games_bet_counter += 1
-
-                if predicted_spread < game["HomeSpread"]:
-                    home_bet = 1
-                else:
-                    home_bet = 0
-
-                if (game['AwayScore'] - game['HomeScore']) < game["HomeSpread"]:
-                    home_outcome = 1
-                else:
-                    home_outcome = 0
-
-                if home_bet == home_outcome:
-                    spread_counter += 1.0
-                    spread_bet_outcome = "Win"
-                else:
-                    spread_bet_outcome = "Lose"
-
-            home_random_bet = np.random.choice([0, 1])
-
-            if home_random_bet == home_outcome:
-                spread_random_counter += 1.0
-                spread_random_bet_outcome = "Win"
-            else:
-                spread_random_bet_outcome = "Lose"
-
-            result = {"HomeTeam": home_team,
-                      "AwayTeam": away_team,
-                      "PredictedHomeScore": int(predicted_home_score),
-                      "PredictedAwayScore": int(predicted_away_score),
-                      "ActualHomeScore": game["HomeScore"],
-                      "ActualAwayScore": game["AwayScore"],
-                      "PredictedOverUnder": predicted_ou,
-                      "OfferedOverUnder": game["OverUnder"],
-                      "OverUnderOutcome": ou_bet_outcome,
-                      "ActualTotalScore": game["HomeScore"] + game["AwayScore"],
-                      "PredictedSpread": predicted_spread,
-                      "OfferedSpread": game["HomeSpread"],
-                      "SpreadBetOutcome": spread_bet_outcome,
-                      "SpreadRandomBetOutcome": spread_random_bet_outcome,
-                      "OverUnderRandomBetOutcome": ou_random_bet_outcome}
-
-            results.append(result)
-
-        results_df = pd.DataFrame(results)
-
-        print "MODEL: O/U win percentage: %s" %(ou_counter / ou_games_bet_counter)
-        print "MODEL: Spread Bet Win Percentage: %s"%(spread_counter / len(test_records))
-        print
-        print "RANDOM: O/U win percentage: %s" %(ou_random_counter / spread_games_bet_counter)
-        print "RANDOM: Spread Bet Win Percentage: %s"%(spread_random_counter / len(test_records))
-
-        logging.info("MODEL: O/U win percentage: %s" %(ou_counter / ou_games_bet_counter))
-        logging.info("MODEL: Spread Bet Win Percentage: %s"%(spread_counter / len(test_records)))
-        logging.info("RANDOM: O/U win percentage: %s" %(ou_random_counter / spread_games_bet_counter))
-        logging.info("RANDOM: Spread Bet Win Percentage: %s"%(spread_random_counter / len(test_records)))
-
-        if plot:
-            self._make_plots(results_df)
-
-        #print results_df
-        return results_df
-
-    def _make_plots(self, results_df):
-
-        # make a plot of the offered - predicted over/under
-
-        records = results_df.to_dict('records')
-
-        diff2 = [(r['ActualHomeScore'] + r['ActualAwayScore']) - r['PredictedOverUnder'] for r in records]
-        bins = np.linspace(-40, 40, 40)
-        plt.hist(diff2, bins, histtype='step', color='b')
-        plt.xlabel("Predicted - Actual Total")
-        plt.show()
-
-        diff3 = [r['ActualHomeScore'] - r['PredictedHomeScore'] for r in records]
-        bins = np.linspace(-40, 40, 40)
-        plt.hist(diff3, bins, histtype='step', color='b')
-        plt.xlabel("Predicted - Actual Home")
-        plt.show()
-
-        diff4 = [r['ActualAwayScore'] - r['PredictedAwayScore'] for r in records]
-        bins = np.linspace(-40, 40, 40)
-        plt.hist(diff4, bins, histtype='step', color='b')
-        plt.xlabel("Predicted - Actual Away")
-        plt.show()
-
-        diff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records]
-        windiff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records if r['OverUnderOutcome'] == 'Win']
-        losediff = [r['OfferedOverUnder'] - r['PredictedOverUnder'] for r in records if r['OverUnderOutcome'] == 'Lose']
-        bins = np.linspace(-25, 25, 10)
-        plt.hist(diff, bins, histtype='step', color='b', label='all')
-        plt.hist(windiff, bins, histtype='step', color='g', label='win')
-        plt.hist(losediff, bins, histtype='step', color='r', label='lose')
-        plt.xlabel('offered - predicted O/U')
-        plt.legend()
-        plt.show()
-
-        diff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records]
-        windiff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records if r['OverUnderOutcome'] == 'Win']
-        losediff = [r['OfferedSpread'] - r['PredictedSpread'] for r in records if r['OverUnderOutcome'] == 'Lose']
-        bins = np.linspace(-25, 25, 10)
-        plt.hist(diff, bins, histtype='step', color='b', label='all')
-        plt.hist(windiff, bins, histtype='step', color='g', label='win')
-        plt.hist(losediff, bins, histtype='step', color='r', label='lose')
-        plt.xlabel('offered - predicted spread')
-        plt.legend()
-        plt.show()
 
 def generate_test_times():
 
@@ -434,28 +229,30 @@ def generate_test_times():
 
     return training_times, testing_times
 
-if __name__=='__main__':
+def generate_test_times2():
 
-    training_times, testing_times = generate_test_times()
+    start = dt.date(2016, 02, 20)
 
-    for train, test in zip(training_times, testing_times):
+    test_times = [int(start.strftime('%Y') + start.strftime('%m') + start.strftime('%d'))]
 
-        logging.info("training set: %s - %s" % (train[0], train[1]))
-        logging.info("testing set: %s - %s" % (test[0], test[1]))
+    delta = dt.timedelta(days=1)
 
-        try:
-            print train, test
-            predictor = Predictor()
+    for d in range(175):
 
-            test_dataset = predictor.get_test_dataset(startdate=train[0], enddate=train[1])
+        t = start + delta
 
-            trace = predictor.model(test_dataset)
-            #predictor.save_model(trace,file='/Users/smacmullin/sports/test/modeltest.pkl')
+        test_times.append(int(t.strftime('%Y') + t.strftime('%m') + t.strftime('%d')))
 
-            #trace = predictor.load_model(file='/Users/smacmullin/sports/test/modeltest.pkl')
+        start = t
 
-            #predictor.predict_game(trace, test_dataset['teams'], away_team='LAL', home_team='NYK')
-            results = predictor.validate_model(trace, test_dataset['teams'], startdate=test[0], enddate=test[1], plot=False)
-        except:
-            print traceback.format_exc()
-            pass
+    return test_times
+
+if __name__ == '__main__':
+
+    predictor = Predictor()
+    test_dataset = predictor.get_test_dataset(date=20161125, ngames=8)
+    #trace = predictor.model(test_dataset)
+    #predictor.save_model(trace, file='/Users/smacmullin/sports/test/nba_model_20161125_8.pkl')
+    trace = predictor.load_model(file='/Users/smacmullin/sports/test/nba_model_20161125_8.pkl')
+    predictor.predict_game(trace,test_dataset['teams'], away_team='ATL', home_team='LAL')
+
