@@ -2,7 +2,9 @@ import configobj
 import cPickle
 from crate import client
 import datetime as dt
+from joblib import Parallel, delayed
 import logging
+import multiprocessing as mp
 import numpy as np
 import pandas as pd
 import pymc3 as pm
@@ -11,7 +13,6 @@ import traceback
 from teams import nba_teams
 
 logging.basicConfig(filename="/Users/smacmullin/sports/modelvalidation.log",format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
-
 
 def index_teams(team_keys):
 
@@ -75,7 +76,8 @@ class Predictor(object):
             WHERE nba.games."GameId" = nba.results."GameId"
             AND nba.games."GameId" = nba.lines."GameId"
             AND (nba.games."HomeTeam" = '%s' or nba.games."AwayTeam" = '%s')
-            AND nba.games."GameDate" < %i
+            AND nba.games."GameDate" <= %i
+            AND nba.games."GameDate" >= 20151027
             ORDER BY nba.games."GameDate" DESC
             LIMIT %i
             ''' % (team, team, date, ngames)
@@ -206,6 +208,7 @@ class Predictor(object):
         std_ou = np.std([aws + hs for hs, aws in zip(home_scores, away_scores)])
         print "Predicted Over Under: %s +/- %s" % (predicted_ou, std_ou)
         print "Predicted Home Money: %s" %(p_home)
+        return predicted_spread, predicted_ou
 
 
 def generate_test_times():
@@ -231,13 +234,13 @@ def generate_test_times():
 
 def generate_test_times2():
 
-    start = dt.date(2016, 02, 20)
+    start = dt.date(2015, 10, 27)
 
     test_times = [int(start.strftime('%Y') + start.strftime('%m') + start.strftime('%d'))]
 
     delta = dt.timedelta(days=1)
 
-    for d in range(175):
+    for d in range(173):
 
         t = start + delta
 
@@ -247,12 +250,41 @@ def generate_test_times2():
 
     return test_times
 
-if __name__ == '__main__':
+def build_model(arg):
 
     predictor = Predictor()
-    test_dataset = predictor.get_test_dataset(date=20161125, ngames=8)
-    #trace = predictor.model(test_dataset)
-    #predictor.save_model(trace, file='/Users/smacmullin/sports/test/nba_model_20161125_8.pkl')
-    trace = predictor.load_model(file='/Users/smacmullin/sports/test/nba_model_20161125_8.pkl')
-    predictor.predict_game(trace,test_dataset['teams'], away_team='ATL', home_team='LAL')
+    test_dataset = predictor.get_test_dataset(date=int(arg[0]), ngames=arg[1])
+    trace = predictor.model(test_dataset)
+    predictor.save_model(trace, file='/Users/smacmullin/sports/2015models/nba_model_%s_%s.pkl' % (arg[0], arg[1]))
+
+
+if __name__ == '__main__':
+
+    num_cores = mp.cpu_count()
+    print 'number of processors', num_cores
+
+    test_times = generate_test_times2()
+
+    for t in test_times:
+
+        #spreads = []
+        #ous = []
+
+        n_games_history = [(t,2), (t,3), (t,4), (t,5), (t,6), (t,7), (t,8)]
+        Parallel(n_jobs=num_cores)(delayed(build_model)(arg) for arg in n_games_history)
+
+        # for n in [2,3,4,5,6,7,8]:
+        #     predictor = Predictor()
+        #     test_dataset = predictor.get_test_dataset(date=int(t), ngames=n)
+        #     trace = predictor.model(test_dataset)
+        #     predictor.save_model(trace, file='/Users/smacmullin/sports/2015models/nba_model_%s_%s.pkl'%(t,n))
+            #trace = predictor.load_model(file='/Users/smacmullin/sports/test/nba_model_20161225_%s.pkl'%n)
+            #spread, ou = predictor.predict_game(trace,test_dataset['teams'], away_team='LAC', home_team='LAL')
+            #spreads.append(spread)
+            #ous.append(ou)
+
+        #print np.average(spreads), np.std(spreads)
+        #print np.average(ous), np.std(ous)
+
+
 

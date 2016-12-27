@@ -121,7 +121,7 @@ if __name__=='__main__':
 
     # yesterday = date.today() - timedelta(1)
     # gamedate = yesterday.strftime('%Y%m%d')
-    gamedate='20161126'
+    gamedate='20161223'
     url = 'http://www.cbssports.com/nba/scoreboard/%s'%gamedate
     games = process_page(url, gamedate)
     print games
