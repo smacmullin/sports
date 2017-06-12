@@ -25,13 +25,6 @@ def index_teams(team_keys):
 team_index = index_teams(nba_teams)
 
 
-def moneyline_from_implied_odds(p):
-    if p < 0.5:
-        return int(-1. * (100. * (p - 1.0)) / p)
-    else:
-        return int((100. * p) / (p - 1.0))
-
-
 class Predictor(object):
 
     def __init__(self, *args, **kwargs):
@@ -260,31 +253,34 @@ def build_model(arg):
 
 if __name__ == '__main__':
 
-    num_cores = mp.cpu_count()
-    print 'number of processors', num_cores
+    # num_cores = mp.cpu_count()
+    # print 'number of processors', num_cores
+    #
+    # test_times = generate_test_times2()
+    #
+    # for t in test_times:
+    #
+    #     #spreads = []
+    #     #ous = []
+    #
+    #     n_games_history = [(t,2), (t,3), (t,4), (t,5), (t,6), (t,7), (t,8)]
+    #     Parallel(n_jobs=num_cores)(delayed(build_model)(arg) for arg in n_games_history)
 
-    test_times = generate_test_times2()
+    spreads = []
+    ous = []
 
-    for t in test_times:
+    for n in [2,3,4,5,6,7,8]:
+        predictor = Predictor()
+        test_dataset = predictor.get_test_dataset(date=int(20170113), ngames=n)
+        #trace = predictor.model(test_dataset)
+        #predictor.save_model(trace, file='/Users/smacmullin/sports/test/nba_model_20170113_%s.pkl'%n)
+        trace = predictor.load_model(file='/Users/smacmullin/sports/test/nba_model_20170113_%s.pkl'%n)
+        spread, ou = predictor.predict_game(trace,test_dataset['teams'], away_team='ORL', home_team='UTA')
+        spreads.append(spread)
+        ous.append(ou)
 
-        #spreads = []
-        #ous = []
-
-        n_games_history = [(t,2), (t,3), (t,4), (t,5), (t,6), (t,7), (t,8)]
-        Parallel(n_jobs=num_cores)(delayed(build_model)(arg) for arg in n_games_history)
-
-        # for n in [2,3,4,5,6,7,8]:
-        #     predictor = Predictor()
-        #     test_dataset = predictor.get_test_dataset(date=int(t), ngames=n)
-        #     trace = predictor.model(test_dataset)
-        #     predictor.save_model(trace, file='/Users/smacmullin/sports/2015models/nba_model_%s_%s.pkl'%(t,n))
-            #trace = predictor.load_model(file='/Users/smacmullin/sports/test/nba_model_20161225_%s.pkl'%n)
-            #spread, ou = predictor.predict_game(trace,test_dataset['teams'], away_team='LAC', home_team='LAL')
-            #spreads.append(spread)
-            #ous.append(ou)
-
-        #print np.average(spreads), np.std(spreads)
-        #print np.average(ous), np.std(ous)
+    print np.average(spreads), np.std(spreads)
+    print np.average(ous), np.std(ous)
 
 
 

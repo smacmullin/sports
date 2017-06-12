@@ -37,10 +37,14 @@ def process_page(url,gamedate):
         for table in all_tables:
 
             game_result = []
+            print table
+            print
 
             for row in table.findAll('tr'):
 
-                team_cells = row.findAll('td', {'class': 'teamName'})
+                #print row
+                team_cells = row.findAll('td', {'class': 'team'})
+                #print team_cells
                 score_cells = row.findAll('td', {'class': 'finalScore'})
 
                 for cell in team_cells:
@@ -56,6 +60,7 @@ def process_page(url,gamedate):
                     max_match = max(matches, key=lambda x: x['ratio'])
                     team_longname = max_match['team']
                     team = nba_teams[team_longname]
+                    #print team
 
                 for cell in score_cells:
                     score = float(cell.text.split('\n')[0])
@@ -121,8 +126,8 @@ if __name__=='__main__':
 
     # yesterday = date.today() - timedelta(1)
     # gamedate = yesterday.strftime('%Y%m%d')
-    gamedate='20161223'
+    gamedate='20170102'
     url = 'http://www.cbssports.com/nba/scoreboard/%s'%gamedate
     games = process_page(url, gamedate)
     print games
-    insert_results_to_crate(games, 'nba')
+    #insert_results_to_crate(games, 'nba')
